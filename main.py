@@ -265,7 +265,7 @@ async def status_report():
         log.error(f"[로그채널] 전송 실패: {e}")
 
     # 최신 API 로그 (기획전별 개별 코드 블록)
-    for label, raw in last_api_logs.items():
+    for label, raw in list(last_api_logs.items()):
         # 메시지 길이 제한(2000자) 대응 및 가독성 개선
         content = raw if len(raw) < 1900 else raw[:1900] + "\n...(중략)"
         msg = f"**[{label} 로그]**\n```json\n{content}\n```"
