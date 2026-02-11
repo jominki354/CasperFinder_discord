@@ -283,6 +283,7 @@ async def check_git_update():
     import os
 
     if not os.path.exists(UPDATE_LOG_PATH):
+        log.info(f"[Git로그] 로그 파일 없음: {UPDATE_LOG_PATH}")
         return
 
     try:
@@ -292,20 +293,36 @@ async def check_git_update():
         if not content or "Already up to date." in content:
             return
 
+        log.info(
+            f"[Git로그] 새로운 업데이트 로그 발견 (길이: {len(content)}). 전송 시도..."
+        )
+
         # 로그 채널 전송
-        channel = bot.get_channel(GIT_LOG_CHANNEL_ID)
+        try:
+            channel = await bot.fetch_channel(GIT_LOG_CHANNEL_ID)
+        except Exception as e:
+            log.warning(f"[Git로그] fetch_channel 실패, get_channel 시도: {e}")
+            channel = bot.get_channel(GIT_LOG_CHANNEL_ID)
+
         if channel:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 디스코드 메시지 길이 제한(2000자) 대응
+            if len(content) > 1800:
+                content = content[-1800:] + "\n...(중략)"
+
             msg = (
                 f"### 🚀 **자동 업데이트 감지** ({now})\n"
                 f"```diff\n{content}\n```\n"
                 f"✨ 시스템이 최신 버전으로 갱신되었습니다."
             )
             await channel.send(msg)
+            log.info("[Git로그] 디스코드 보고 성공.")
 
             # 읽은 로그 비우기 (중복 방지)
             with open(UPDATE_LOG_PATH, "w", encoding="utf-8") as f:
                 f.write("Already up to date. (Reported)")
+        else:
+            log.error(f"[Git로그] 채널을 찾을 수 없음: {GIT_LOG_CHANNEL_ID}")
     except Exception as e:
         log.error(f"[Git로그] 처리 실패: {e}")
 
