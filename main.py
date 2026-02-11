@@ -266,11 +266,12 @@ async def status_report():
 
     # 최신 API 로그 (기획전별 개별 코드 블록)
     for label, raw in last_api_logs.items():
-        msg = f"```\n[{label}]\n{raw}\n```"
-        if len(msg) > 2000:
-            msg = msg[:1997] + "```"
+        # 메시지 길이 제한(2000자) 대응 및 가독성 개선
+        content = raw if len(raw) < 1900 else raw[:1900] + "\n...(중략)"
+        msg = f"**[{label} 로그]**\n```json\n{content}\n```"
         try:
             await log_ch.send(msg)
+            await asyncio.sleep(1)  # 전송 안정성을 위한 딜레이
         except Exception as e:
             log.error(f"[로그채널] {label} 로그 전송 실패: {e}")
 
