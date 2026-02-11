@@ -32,8 +32,10 @@ log = logging.getLogger("CasperFinder")
 config = load_config()
 DISCORD_TOKEN = config["discord"]["token"]
 INTEGRATED_CHANNEL_ID = int(config["discord"]["integratedChannelId"])
-LOG_CHANNEL_ID = 1471105372755333241
 POLL_INTERVAL = 3
+STATUS_LOG_CHANNEL_ID = 1471105372755333241  # 상태 보고 채널
+GIT_LOG_CHANNEL_ID = 1471131944334000150  # 깃풀 로그 채널
+UPDATE_LOG_PATH = "/opt/casperfinder-bot/data/update.log"
 
 # ── 가솔린 차량 필터 (원본 poller.py에서 이식) ──
 _GASOLINE_KEYWORDS = ["가솔린", "gasoline", "캐스퍼 밴"]
@@ -237,7 +239,7 @@ async def poll():
 @tasks.loop(minutes=5)
 async def status_report():
     """5분마다 서버 로그 채널에 상태 요약 전송."""
-    log_ch = bot.get_channel(LOG_CHANNEL_ID)
+    log_ch = bot.get_channel(STATUS_LOG_CHANNEL_ID)
     if not log_ch:
         return
 
@@ -276,6 +278,38 @@ async def status_report():
             log.error(f"[로그채널] {label} 로그 전송 실패: {e}")
 
 
+async def check_git_update():
+    """업데이트 로그를 확인하여 변경사항이 있으면 디스코드에 보고."""
+    import os
+
+    if not os.path.exists(UPDATE_LOG_PATH):
+        return
+
+    try:
+        with open(UPDATE_LOG_PATH, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+
+        if not content or "Already up to date." in content:
+            return
+
+        # 로그 채널 전송
+        channel = bot.get_channel(GIT_LOG_CHANNEL_ID)
+        if channel:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            msg = (
+                f"### 🚀 **자동 업데이트 감지** ({now})\n"
+                f"```diff\n{content}\n```\n"
+                f"✨ 시스템이 최신 버전으로 갱신되었습니다."
+            )
+            await channel.send(msg)
+
+            # 읽은 로그 비우기 (중복 방지)
+            with open(UPDATE_LOG_PATH, "w", encoding="utf-8") as f:
+                f.write("Already up to date. (Reported)")
+    except Exception as e:
+        log.error(f"[Git로그] 처리 실패: {e}")
+
+
 @status_report.before_loop
 async def before_status_report():
     await bot.wait_until_ready()
@@ -296,6 +330,10 @@ async def on_ready():
         f"[casperfinder_bot] 감시 대상: {', '.join(t['label'] for t in config['targets'])}"
     )
     log.info(f"[casperfinder_bot] 폴링 간격: ~{POLL_INTERVAL}초 + 랜덤 지터")
+
+    # 업데이트 로그 체크
+    await check_git_update()
+
     poll.start()
     status_report.start()
 
