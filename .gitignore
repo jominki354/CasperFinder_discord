@@ -1,0 +1,10 @@
+config.json
+data/
+known_vehicles.json
+venv/
+__pycache__/
+*.pyc
+.env
+.ipynb_checkpoints/
+.vscode/
+.idea/
