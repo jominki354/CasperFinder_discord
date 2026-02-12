@@ -100,6 +100,25 @@ async def fetch_exhibition(
     return result[0], result[1], result[2], result[3], "\n".join(log_lines)
 
 
-def build_detail_url(vehicle_id):
-    """차량 상세/구매 페이지 URL 생성."""
-    return f"https://casper.hyundai.com/vehicles/detail?vehicleId={vehicle_id}"
+def build_detail_url(vehicle, exhb_no=""):
+    """차량 상세/구매 페이지 URL 생성 (공식 패턴).
+
+    우선순위:
+    1. criterionYearMonth + carProductionNumber → 공식 리스트 상세 페이지
+    2. vehicleId → 간편 상세 페이지 (폴백)
+    """
+    yymm = vehicle.get("criterionYearMonth", "") if isinstance(vehicle, dict) else ""
+    prod_no = (
+        vehicle.get("carProductionNumber", "") if isinstance(vehicle, dict) else ""
+    )
+
+    if yymm and prod_no:
+        base = "https://casper.hyundai.com/vehicles/car-list/detail"
+        url = f"{base}?criterionYearMonth={yymm}&carProductionNumber={prod_no}"
+        if exhb_no:
+            url += f"&exhbNo={exhb_no}"
+        return url
+
+    # 폴백: vehicleId 기반
+    vid = vehicle.get("vehicleId", vehicle) if isinstance(vehicle, dict) else vehicle
+    return f"https://casper.hyundai.com/vehicles/detail?vehicleId={vid}"

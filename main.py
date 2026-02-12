@@ -100,8 +100,7 @@ def build_embed(vehicle, label, color_hex):
     discount = _get(vehicle, "discountAmt", "crDscntAmt", default=0)
     options = _get_options(vehicle)
 
-    vehicle_id = extract_vehicle_id(vehicle)
-    detail_url = build_detail_url(vehicle_id)
+    detail_url = build_detail_url(vehicle)
 
     opt_text = ", ".join(options) if options else "없음"
 
