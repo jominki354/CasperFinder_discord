@@ -12,7 +12,7 @@ import aiohttp
 import discord
 from discord.ext import tasks
 
-from core.config import load_config
+from core.config import load_config, BASE_DIR
 from core.api import (
     fetch_exhibition,
     extract_vehicle_id,
@@ -324,14 +324,38 @@ async def check_git_update():
 
         if channel:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # 디스코드 메시지 길이 제한(2000자) 대응
-            if len(content) > 1800:
-                content = content[-1800:] + "\n...(중략)"
+
+            # 커밋 해시 및 메시지 추출 시도 (git pull 결과 기반)
+            commit_hash = "Unknown"
+            import subprocess
+
+            try:
+                # 현재 최신 커밋 해시와 메시지 가져오기
+                commit_hash = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR
+                    )
+                    .decode()
+                    .strip()
+                )
+                commit_msg = (
+                    subprocess.check_output(
+                        ["git", "log", "-1", "--pretty=%B"], cwd=BASE_DIR
+                    )
+                    .decode()
+                    .strip()
+                )
+                display_content = commit_msg if commit_msg else content
+            except Exception:
+                display_content = content
+
+            # 디스코드 메시지 빌드
+            github_url = f"https://github.com/jominki354/CasperFinder_discord/commit/{commit_hash}"
 
             msg = (
                 f"### 🚀 **자동 업데이트 감지** ({now})\n"
-                f"```diff\n{content}\n```\n"
-                f"✨ 시스템이 최신 버전으로 갱신되었습니다."
+                f"**커밋 번호:** [{commit_hash}]({github_url})\n"
+                f"```\n{display_content[:1800]}\n```"
             )
             await channel.send(msg)
             log.info("[Git로그] 디스코드 보고 성공.")
