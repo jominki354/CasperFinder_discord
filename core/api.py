@@ -8,6 +8,7 @@ API 클라이언트 모듈
 
 import json
 import logging
+import time
 import aiohttp
 import asyncio
 
@@ -15,8 +16,9 @@ log = logging.getLogger("CasperFinder")
 
 
 def build_url(api_config, exhb_no):
-    """API 요청 URL 생성."""
-    return f"{api_config['baseUrl']}/{exhb_no}"
+    """API 요청 URL 생성 (Cache-Busting 타임스탬프 추가)."""
+    ts = int(time.time() * 1000)
+    return f"{api_config['baseUrl']}/{exhb_no}?t={ts}"
 
 
 def build_payload(api_config, exhb_no, target_overrides=None):
@@ -59,7 +61,16 @@ async def fetch_exhibition(
     """단일 기획전 API 호출. (success, vehicles, total, error, raw_log) 반환."""
     url = build_url(api_config, exhb_no)
     payload = build_payload(api_config, exhb_no, target_overrides)
-    headers = headers_override or api_config.get("headers")
+
+    # 헤더 복사 및 캐시 제어 강제 추가
+    headers = dict(headers_override or api_config.get("headers", {}))
+    headers.update(
+        {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
 
     log_lines = []
     log_lines.append(f">>> REQUEST: {url}")
