@@ -346,7 +346,7 @@ async def check_git_update():
 
             msg = (
                 f"### **자동 업데이트 감지** ({now})\n"
-                f"**커밋 번호:** [{commit_hash}]({github_url})\n"
+                f"**커밋 번호:** [{commit_hash}](<{github_url}>)\n"
                 f"```\n{content[:1800]}\n```"
             )
             await channel.send(msg)
