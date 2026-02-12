@@ -162,6 +162,27 @@ async def poll():
             for car_code in _TARGET_CAR_CODES:
                 overrides = dict(target) if target else {}
                 overrides["carCode"] = car_code
+
+                # ── 기획전 타입별 지역 설정 강제 적용 (v0.1.1 로직 이식) ──
+                # 제주 배송지 (T, T1), 서울 보조금 (1100)
+                if exhb_no.startswith("E"):
+                    overrides["deliveryAreaCode"] = "T"
+                    overrides["deliveryLocalAreaCode"] = "T1"
+                    overrides["subsidyRegion"] = "1100"
+                elif exhb_no.startswith("D"):
+                    overrides["deliveryAreaCode"] = ""
+                    overrides["deliveryLocalAreaCode"] = ""
+                    overrides["subsidyRegion"] = (
+                        "11"  # 전시차는 보통 광역단위이므로 11(서울) 사용 가능성 높음 (regions.json 801: 서울특별시=1100)
+                    )
+                    # subsidyRegion 확인: 서울(01), 서울특별시(1100). API 로그 확인 시 전시차는 '11' 또는 '1100' 사용.
+                    # 안전을 위해 서울특별시(1100)로 통일 시도
+                    overrides["subsidyRegion"] = "1100"
+                elif exhb_no.startswith("R"):
+                    overrides["deliveryAreaCode"] = "T"
+                    overrides["deliveryLocalAreaCode"] = "T1"
+                    overrides["subsidyRegion"] = ""
+
                 try:
                     success, vehicles, cnt, error, raw_log = await fetch_exhibition(
                         session,
