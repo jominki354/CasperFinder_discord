@@ -39,10 +39,9 @@ UPDATE_LOG_PATH = "/opt/casperfinder-bot/data/update.log"
 
 # ── 검색 대상 차종 코드 (화이트리스트) ──
 # 기획전당 각 코드로 개별 API 호출 후 병합
-_TARGET_CAR_CODES = ["AX05", "AX06", "AX03"]
-# AX05 = 2026 캐스퍼 일렉트릭
-# AX06 = 2026 캐스퍼 (가솔린)
-# AX03 = 캐스퍼 일렉트릭 (기존)
+_TARGET_CAR_CODES = ["AX05", "AX06"]
+# AX05 = 캐스퍼 일렉트릭
+# AX06 = 캐스퍼 일렉트릭 (변형)
 
 
 def _is_target_vehicle(vehicle):
