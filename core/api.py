@@ -24,6 +24,7 @@ def build_payload(api_config, exhb_no, target_overrides=None):
     payload = {**api_config["defaultPayload"], "exhbNo": exhb_no}
     if target_overrides:
         for key in [
+            "carCode",
             "deliveryAreaCode",
             "deliveryLocalAreaCode",
             "subsidyRegion",

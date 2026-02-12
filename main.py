@@ -37,27 +37,24 @@ STATUS_LOG_CHANNEL_ID = 1471105372755333241  # 상태 보고 채널
 GIT_LOG_CHANNEL_ID = 1471131944334000150  # 깃풀 로그 채널
 UPDATE_LOG_PATH = "/opt/casperfinder-bot/data/update.log"
 
-# ── 가솔린 차량 필터 (원본 poller.py에서 이식) ──
-_GASOLINE_KEYWORDS = ["가솔린", "gasoline", "캐스퍼 밴"]
-_ELECTRIC_CAR_CODE = "AX05"
+# ── 검색 대상 차종 코드 (화이트리스트) ──
+# 기획전당 각 코드로 개별 API 호출 후 병합
+_TARGET_CAR_CODES = ["AX05", "AX06", "AX03"]
+# AX05 = 2026 캐스퍼 일렉트릭
+# AX06 = 2026 캐스퍼 (가솔린)
+# AX03 = 캐스퍼 일렉트릭 (기존)
 
 
-def _is_electric(vehicle):
-    """캐스퍼 일렉트릭 여부 판별."""
+def _is_target_vehicle(vehicle):
+    """차량이 모니터링 대상 차종인지 판별.
+
+    화이트리스트 방식: _TARGET_CAR_CODES에 포함된 carCode만 허용.
+    carCode가 없는 경우 → 허용 (누락 방지)
+    """
     car_code = vehicle.get("carCode", "")
-    if car_code:
-        return car_code == _ELECTRIC_CAR_CODE
-
-    engine = vehicle.get("carEngineCode", "").upper()
-    if "EV" in engine or "전기" in engine:
+    if not car_code:
         return True
-
-    model = vehicle.get("modelNm", "").lower()
-    for kw in _GASOLINE_KEYWORDS:
-        if kw.lower() in model:
-            return False
-
-    return True
+    return car_code in _TARGET_CAR_CODES
 
 
 # ── 차량 필드 추출 헬퍼 (원본 formatter.py에서 이식) ──
@@ -156,35 +153,57 @@ async def poll():
             api_config = config["api"]
             headers = api_config["headers"]
 
-            try:
-                success, vehicles, total, error, raw_log = await fetch_exhibition(
-                    session,
-                    api_config,
-                    exhb_no,
-                    target_overrides=target,
-                    headers_override=headers,
-                )
-                last_api_logs[label] = raw_log
-            except Exception as e:
-                log.error(f"[{label}] API 호출 실패: {e}")
-                last_api_status[label] = "ERROR"
-                last_api_logs[label] = f"ERROR: {e}"
+            # ── 각 carCode별로 개별 호출 후 병합 (누락 방지) ──
+            all_vehicles = []
+            total = 0
+            last_error = None
+            any_success = False
+            code_results = []
+            all_raw_logs = []
+
+            for car_code in _TARGET_CAR_CODES:
+                overrides = dict(target) if target else {}
+                overrides["carCode"] = car_code
+                try:
+                    success, vehicles, cnt, error, raw_log = await fetch_exhibition(
+                        session,
+                        api_config,
+                        exhb_no,
+                        target_overrides=overrides,
+                        headers_override=headers,
+                    )
+                    all_raw_logs.append(f"--- {car_code} ---\n{raw_log}")
+                    if success:
+                        any_success = True
+                        all_vehicles.extend(vehicles)
+                        total = max(total, cnt)
+                        code_results.append(f"{car_code}:{len(vehicles)}대")
+                    else:
+                        last_error = error
+                        code_results.append(f"{car_code}:실패")
+                except Exception as e:
+                    log.error(f"[{label}] {car_code} API 호출 실패: {e}")
+                    code_results.append(f"{car_code}:ERR")
+                    all_raw_logs.append(f"--- {car_code} ---\nERROR: {e}")
+
+            last_api_logs[label] = "\n".join(all_raw_logs)
+
+            if not any_success:
+                log.warning(f"[{label}] 전체 실패 — {last_error}")
+                last_api_status[label] = f"FAIL: {last_error}"
                 continue
 
-            if not success:
-                log.warning(f"[{label}] {error}")
-                last_api_status[label] = f"FAIL: {error}"
-                continue
-
-            last_api_status[label] = f"200 OK | {total}대"
-
-            # 전기차만 필터링
+            # 중복 제거 + 화이트리스트 필터
             current = {}
-            for v in vehicles:
-                if _is_electric(v):
+            for v in all_vehicles:
+                if _is_target_vehicle(v):
                     vid = extract_vehicle_id(v)
-                    if vid:
+                    if vid and vid not in current:
                         current[vid] = v
+
+            codes_summary = " | ".join(code_results)
+            last_api_status[label] = f"{codes_summary} → {len(current)}대"
+            log.info(f"[{label}] {codes_summary} → 합계 {len(current)}대")
 
             # 초기 실행: 기존 목록 등록만 하고 알림 없음
             if exhb_no not in known_vehicles:
@@ -257,7 +276,7 @@ async def status_report():
 
     # 최근 이벤트
     if last_events:
-        lines.append(f"\n**최근 이벤트**")
+        lines.append("\n**최근 이벤트**")
         for ev in last_events[-10:]:
             lines.append(ev)
 
