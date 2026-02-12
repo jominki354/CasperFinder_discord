@@ -330,7 +330,7 @@ async def check_git_update():
             import subprocess
 
             try:
-                # 현재 최신 커밋 해시와 메시지 가져오기
+                # 현재 최신 커밋 해시 가져오기
                 commit_hash = (
                     subprocess.check_output(
                         ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR
@@ -338,24 +338,16 @@ async def check_git_update():
                     .decode()
                     .strip()
                 )
-                commit_msg = (
-                    subprocess.check_output(
-                        ["git", "log", "-1", "--pretty=%B"], cwd=BASE_DIR
-                    )
-                    .decode()
-                    .strip()
-                )
-                display_content = commit_msg if commit_msg else content
             except Exception:
-                display_content = content
+                pass
 
             # 디스코드 메시지 빌드
             github_url = f"https://github.com/jominki354/CasperFinder_discord/commit/{commit_hash}"
 
             msg = (
-                f"### 🚀 **자동 업데이트 감지** ({now})\n"
+                f"### **자동 업데이트 감지** ({now})\n"
                 f"**커밋 번호:** [{commit_hash}]({github_url})\n"
-                f"```\n{display_content[:1800]}\n```"
+                f"```\n{content[:1800]}\n```"
             )
             await channel.send(msg)
             log.info("[Git로그] 디스코드 보고 성공.")
