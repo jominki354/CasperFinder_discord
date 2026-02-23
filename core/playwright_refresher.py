@@ -80,18 +80,20 @@ class TokenRefresher:
                     log.info("[Refresher] 1단계: 현대차 캐스퍼 메인 접속...")
                     await page.goto(
                         "https://casper.hyundai.com",
-                        wait_until="networkidle",
-                        timeout=60000,
+                        wait_until="domcontentloaded",
+                        timeout=120000,
                     )
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
 
                     # 2. 기획전 페이지로 이동 (exhbNo 파라미터 필수)
                     log.info("[Refresher] 2단계: 기획전 페이지 이동...")
                     await page.goto(
                         "https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo=E20260277",
-                        wait_until="networkidle",
-                        timeout=60000,
+                        wait_until="domcontentloaded",
+                        timeout=120000,
                     )
+                    # networkidle 대신 DOM 로드 후 추가 대기로 API 호출 유도
+                    await asyncio.sleep(5)
 
                     # 3. 데이터 로딩을 위해 잠시 대기 및 "초기화" 버튼 클릭 시도 (이벤트 발생)
                     await asyncio.sleep(3)
