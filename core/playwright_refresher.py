@@ -85,10 +85,10 @@ class TokenRefresher:
                     )
                     await asyncio.sleep(2)
 
-                    # 2. 기획전 페이지로 이동
+                    # 2. 기획전 페이지로 이동 (exhbNo 파라미터 필수)
                     log.info("[Refresher] 2단계: 기획전 페이지 이동...")
                     await page.goto(
-                        "https://casper.hyundai.com/vehicles/car-list/promotion",
+                        "https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo=E20260277",
                         wait_until="networkidle",
                         timeout=60000,
                     )
@@ -100,7 +100,7 @@ class TokenRefresher:
                         await page.click("button:has-text('초기화')", timeout=5000)
                         log.info("[Refresher] 3단계: 초기화 버튼 클릭 완료")
                         await asyncio.sleep(2)
-                    except:
+                    except Exception:
                         log.warning(
                             "[Refresher] 초기화 버튼을 찾지 못했으나 계속 진행합니다."
                         )
