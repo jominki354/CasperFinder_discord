@@ -2,7 +2,7 @@
 CasperFinder Discord Bot (casperfinder_bot)
 캐스퍼 기획전 신규 차량을 감지하여 Discord 채널에 알림을 전송하는 봇.
 """
-# [TEST] 서버 Git 자동 업데이트(pull) 트리거 테스트용 주석 추가 (2026-02-23)
+# [TEST] 서버 Git 자동 업데이트(pull) 트리거 테스트용 주석 추가 (2026-02-23 - 2차)
 
 import asyncio
 import logging
