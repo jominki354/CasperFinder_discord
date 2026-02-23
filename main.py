@@ -325,71 +325,6 @@ async def status_report():
             log.error(f"[로그채널] {label} 로그 전송 실패: {e}")
 
 
-async def check_git_update():
-    """업데이트 로그를 확인하여 변경사항이 있으면 디스코드에 보고."""
-    import os
-
-    if not os.path.exists(UPDATE_LOG_PATH):
-        log.info(f"[Git로그] 로그 파일 없음: {UPDATE_LOG_PATH}")
-        return
-
-    try:
-        with open(UPDATE_LOG_PATH, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-
-        if not content or "Already up to date." in content:
-            return
-
-        log.info(
-            f"[Git로그] 새로운 업데이트 로그 발견 (길이: {len(content)}). 전송 시도..."
-        )
-
-        # 로그 채널 전송
-        try:
-            channel = await bot.fetch_channel(GIT_LOG_CHANNEL_ID)
-        except Exception as e:
-            log.warning(f"[Git로그] fetch_channel 실패, get_channel 시도: {e}")
-            channel = bot.get_channel(GIT_LOG_CHANNEL_ID)
-
-        if channel:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            # 커밋 해시 및 메시지 추출 시도 (git pull 결과 기반)
-            commit_hash = "Unknown"
-            import subprocess
-
-            try:
-                # 현재 최신 커밋 해시 가져오기
-                commit_hash = (
-                    subprocess.check_output(
-                        ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR
-                    )
-                    .decode()
-                    .strip()
-                )
-            except Exception:
-                pass
-
-            # 디스코드 메시지 빌드
-            github_url = f"https://github.com/jominki354/CasperFinder_discord/commit/{commit_hash}"
-
-            msg = (
-                f"### **자동 업데이트 감지** ({now})\n"
-                f"**커밋 번호:** [{commit_hash}](<{github_url}>)\n"
-                f"```\n{content[:1800]}\n```"
-            )
-            await channel.send(msg)
-            log.info("[Git로그] 디스코드 보고 성공.")
-
-            # 읽은 로그 비우기 (중복 방지)
-            with open(UPDATE_LOG_PATH, "w", encoding="utf-8") as f:
-                f.write("Already up to date. (Reported)")
-        else:
-            log.error(f"[Git로그] 채널을 찾을 수 없음: {GIT_LOG_CHANNEL_ID}")
-    except Exception as e:
-        log.error(f"[Git로그] 처리 실패: {e}")
-
-
 @status_report.before_loop
 async def before_status_report():
     await bot.wait_until_ready()
@@ -410,9 +345,6 @@ async def on_ready():
         f"[casperfinder_bot] 감시 대상: {', '.join(t['label'] for t in config['targets'])}"
     )
     log.info(f"[casperfinder_bot] 폴링 간격: ~{POLL_INTERVAL}초 + 랜덤 지터")
-
-    # 업데이트 로그 체크
-    await check_git_update()
 
     poll.start()
     status_report.start()
