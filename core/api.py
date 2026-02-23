@@ -88,7 +88,11 @@ async def fetch_exhibition(
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Requested-With": "XMLHttpRequest",
+            "ep-channel": "wpc",
+            "ep-version": "v2",
+            "service-type": "product",
             "Referer": f"https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo={exhb_no}",
+            "Origin": "https://casper.hyundai.com",
         }
     )
 
