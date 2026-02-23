@@ -19,6 +19,7 @@ from core.api import (
     extract_vehicle_id,
     build_detail_url,
 )
+from core.playwright_refresher import refresher
 from core.storage import load_known_vehicles, save_known_vehicles
 
 # ── 로깅 ──
@@ -156,6 +157,14 @@ last_api_logs = {}
 async def poll():
     """주기적으로 각 기획전 API를 호출하고 신규 차량을 감지."""
     global poll_count
+
+    # 봇 토큰 획득 확인 (없으면 조회 건너뜀)
+    if not refresher.ux_state_key:
+        log.warning(
+            "[API] 보안 토큰(X-UX-State-Key)이 아직 없습니다. 조회를 대기합니다."
+        )
+        return
+
     poll_count += 1
 
     timeout = aiohttp.ClientTimeout(total=10)
@@ -213,9 +222,19 @@ async def poll():
 
             last_api_logs[label] = "\n".join(all_raw_logs)
 
+            last_api_logs[label] = "\n".join(all_raw_logs)
+
             if not any_success:
                 log.warning(f"[{label}] 전체 실패 — {last_error}")
                 last_api_status[label] = f"FAIL: {last_error}"
+
+                # 방화벽(봇 차단) 에러로 의심되는 경우 즉시 토큰 강제 갱신
+                if "가짜 응답" in str(last_error) or "HTTP 1000" in str(last_error):
+                    log.error(
+                        "[API] 🚨 방화벽 차단 감지됨. 백그라운드 토큰 긴급 갱신을 요청합니다."
+                    )
+                    asyncio.create_task(refresher.refresh_tokens(force=True))
+
                 continue
 
             # 중복 제거 + 화이트리스트 필터 (AX05, AX06만 추출)
@@ -332,7 +351,21 @@ async def before_status_report():
 
 @poll.before_loop
 async def before_poll():
-    """봇이 ready 상태가 될 때까지 대기."""
+    """봇이 ready 상태가 될 때까지 대기하고 최초 토큰 획득."""
+    await bot.wait_until_ready()
+    # 첫 조회 전 토큰 획득
+    log.info("[casperfinder_bot] 최초 API 보안 토큰(WAF 우회용) 획득을 시도합니다...")
+    await refresher.refresh_tokens(force=True)
+
+
+@tasks.loop(minutes=20)
+async def refresh_tokens_loop():
+    """20분마다 주기적으로 안전하게 보안 토큰(WAF/쿠키)을 갱신합니다."""
+    await refresher.refresh_tokens(force=False)
+
+
+@refresh_tokens_loop.before_loop
+async def before_refresh():
     await bot.wait_until_ready()
 
 
@@ -347,6 +380,7 @@ async def on_ready():
     log.info(f"[casperfinder_bot] 폴링 간격: ~{POLL_INTERVAL}초 + 랜덤 지터")
 
     poll.start()
+    refresh_tokens_loop.start()
     status_report.start()
 
 

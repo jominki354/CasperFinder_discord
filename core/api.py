@@ -14,6 +14,8 @@ import asyncio
 
 log = logging.getLogger("CasperFinder")
 
+from core.playwright_refresher import refresher
+
 
 def build_url(api_config, exhb_no):
     """API 요청 URL 생성 (Cache-Busting 타임스탬프 추가)."""
@@ -55,24 +57,6 @@ def extract_vehicle_id(vehicle):
     return vehicle.get("vehicleId", vehicle.get("vin", ""))
 
 
-async def get_layout_hash(session, headers_base):
-    """봇 탐지 우회를 위한 동적 레이아웃 해시(X-UX-State-Key) 획득.
-
-    서버의 토큰 재사용 감지를 피하기 위해 캐싱 없이 매번 새로 요청함.
-    """
-    sync_url = "https://casper.hyundai.com/gw/wp/common/v2/common/ui/layout-sync"
-    try:
-        async with session.get(sync_url, headers=headers_base, timeout=5) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                h = data.get("data", {}).get("layoutHash")
-                if h:
-                    return h
-    except Exception as e:
-        log.error(f"[API] 레이아웃 해시 획득 실패: {e}")
-    return None
-
-
 async def fetch_exhibition(
     session, api_config, exhb_no, target_overrides=None, headers_override=None
 ):
@@ -96,15 +80,15 @@ async def fetch_exhibition(
         }
     )
 
-    # 봇 탐지 우회 토큰 획득
-    layout_hash = await get_layout_hash(session, headers)
-    if layout_hash:
-        headers["X-UX-State-Key"] = layout_hash
+    # 봇 탐지 우회 토큰 획득 (백그라운드 갱신된 값 사용)
+    # 비상시 강제 갱신 로직은 main.py의 에러 핸들링 파트에서 수행
+    valid_headers = refresher.get_headers()
+    headers.update(valid_headers)
 
     log_lines = []
     log_lines.append(f">>> REQUEST: {url}")
-    if layout_hash:
-        log_lines.append(f"TOKEN: {layout_hash}")
+    if "X-UX-State-Key" in headers:
+        log_lines.append(f"TOKEN: {headers['X-UX-State-Key']}")
     log_lines.append(f"PAYLOAD: {json.dumps(payload, ensure_ascii=False, indent=2)}")
 
     log.info(f"[API] >>> REQUEST: {url}")
