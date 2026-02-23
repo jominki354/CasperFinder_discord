@@ -95,6 +95,19 @@ def build_embed(vehicle, label, color_hex):
     ext_color = _get(vehicle, "extCrNm", "exteriorColorName")
     int_color = _get(vehicle, "intCrNm", "interiorColorName")
     center = _get(vehicle, "poName", "deliveryCenterName")
+
+    # 생산일자 추출 및 포맷팅 (YYYYMMDD -> YYYY.MM.DD)
+    prod_date = _get(
+        vehicle,
+        "carProductionDate",
+        "carMfgDt",
+        "mnfctDt",
+        "productionDate",
+        default="-",
+    )
+    if prod_date != "-" and len(prod_date) == 8 and prod_date.isdigit():
+        prod_date = f"{prod_date[:4]}.{prod_date[4:6]}.{prod_date[6:8]}"
+
     price = _get(vehicle, "price", "carPrice", default=0)
     discount = _get(vehicle, "discountAmt", "crDscntAmt", default=0)
     options = _get_options(vehicle)
@@ -108,6 +121,7 @@ def build_embed(vehicle, label, color_hex):
         f"**외장** {ext_color}\n"
         f"**내장** {int_color}\n"
         f"**출고** {center}\n"
+        f"**생산** {prod_date}\n"
         f"**가격** {_fmt_price(price)}\n"
         f"**할인** {_fmt_price(discount)}\n"
         f"**옵션** {opt_text}\n\n"
@@ -151,59 +165,50 @@ async def poll():
             api_config = config["api"]
             headers = api_config["headers"]
 
-            # ── 각 carCode별로 개별 호출 후 병합 (누락 방지) ──
+            # ── 기획전 전체 차량 1회 호출 후 로컬에서 차종(AX05/AX06) 필터링 ──
             all_vehicles = []
             total = 0
             last_error = None
             any_success = False
-            code_results = []
             all_raw_logs = []
 
-            for car_code in _TARGET_CAR_CODES:
-                overrides = dict(target) if target else {}
-                overrides["carCode"] = car_code
+            overrides = dict(target) if target else {}
+            # carCode는 브라우저 기본값인 빈 문자열("") 유지 (봇 탐지 방어를 위해 필수)
+            overrides["carCode"] = ""
 
-                # ── 기획전 타입별 지역 설정 강제 적용 (v0.1.1 로직 이식) ──
-                # 제주 배송지 (T, T1), 서울 보조금 (1100)
-                if exhb_no.startswith("E"):
-                    overrides["deliveryAreaCode"] = "T"
-                    overrides["deliveryLocalAreaCode"] = "T1"
-                    overrides["subsidyRegion"] = "1100"
-                elif exhb_no.startswith("D"):
-                    overrides["deliveryAreaCode"] = ""
-                    overrides["deliveryLocalAreaCode"] = ""
-                    overrides["subsidyRegion"] = (
-                        "11"  # 전시차는 보통 광역단위이므로 11(서울) 사용 가능성 높음 (regions.json 801: 서울특별시=1100)
-                    )
-                    # subsidyRegion 확인: 서울(01), 서울특별시(1100). API 로그 확인 시 전시차는 '11' 또는 '1100' 사용.
-                    # 안전을 위해 서울특별시(1100)로 통일 시도
-                    overrides["subsidyRegion"] = "1100"
-                elif exhb_no.startswith("R"):
-                    overrides["deliveryAreaCode"] = "T"
-                    overrides["deliveryLocalAreaCode"] = "T1"
-                    overrides["subsidyRegion"] = ""
+            # ── 기획전 타입별 지역 설정 강제 적용 (v0.1.1 로직 이식) ──
+            # 제주 배송지 (T, T1), 서울 보조금 (1100)
+            if exhb_no.startswith("E"):
+                overrides["deliveryAreaCode"] = "T"
+                overrides["deliveryLocalAreaCode"] = "T1"
+                overrides["subsidyRegion"] = "1100"
+            elif exhb_no.startswith("D"):
+                overrides["deliveryAreaCode"] = ""
+                overrides["deliveryLocalAreaCode"] = ""
+                overrides["subsidyRegion"] = "1100"
+            elif exhb_no.startswith("R"):
+                overrides["deliveryAreaCode"] = "T"
+                overrides["deliveryLocalAreaCode"] = "T1"
+                overrides["subsidyRegion"] = ""
 
-                try:
-                    success, vehicles, cnt, error, raw_log = await fetch_exhibition(
-                        session,
-                        api_config,
-                        exhb_no,
-                        target_overrides=overrides,
-                        headers_override=headers,
-                    )
-                    all_raw_logs.append(f"--- {car_code} ---\n{raw_log}")
-                    if success:
-                        any_success = True
-                        all_vehicles.extend(vehicles)
-                        total = max(total, cnt)
-                        code_results.append(f"{car_code}:{len(vehicles)}대")
-                    else:
-                        last_error = error
-                        code_results.append(f"{car_code}:실패")
-                except Exception as e:
-                    log.error(f"[{label}] {car_code} API 호출 실패: {e}")
-                    code_results.append(f"{car_code}:ERR")
-                    all_raw_logs.append(f"--- {car_code} ---\nERROR: {e}")
+            try:
+                success, vehicles, cnt, error, raw_log = await fetch_exhibition(
+                    session,
+                    api_config,
+                    exhb_no,
+                    target_overrides=overrides,
+                    headers_override=headers,
+                )
+                all_raw_logs.append(f"--- ALL CARS ---\n{raw_log}")
+                if success:
+                    any_success = True
+                    all_vehicles.extend(vehicles)
+                    total = max(total, cnt)
+                else:
+                    last_error = error
+            except Exception as e:
+                log.error(f"[{label}] API 호출 실패: {e}")
+                all_raw_logs.append(f"--- ALL CARS ---\nERROR: {e}")
 
             last_api_logs[label] = "\n".join(all_raw_logs)
 
@@ -212,17 +217,20 @@ async def poll():
                 last_api_status[label] = f"FAIL: {last_error}"
                 continue
 
-            # 중복 제거 + 화이트리스트 필터
+            # 중복 제거 + 화이트리스트 필터 (AX05, AX06만 추출)
             current = {}
+            filtered_count = 0
             for v in all_vehicles:
                 if _is_target_vehicle(v):
+                    filtered_count += 1
                     vid = extract_vehicle_id(v)
                     if vid and vid not in current:
                         current[vid] = v
 
-            codes_summary = " | ".join(code_results)
-            last_api_status[label] = f"{codes_summary} → {len(current)}대"
-            log.info(f"[{label}] {codes_summary} → 합계 {len(current)}대")
+            last_api_status[label] = (
+                f"유효(전기차) {filtered_count}대 / 전체 {len(all_vehicles)}대 (필터적용 후 중복제거: {len(current)}대)"
+            )
+            log.info(f"[{label}] 유효 {filtered_count}대 → 합계 {len(current)}대")
 
             # 초기 실행: 기존 목록 등록만 하고 알림 없음
             if exhb_no not in known_vehicles:
