@@ -20,12 +20,44 @@
     "integratedChannelId": "통합_채널_ID"
   },
   "targets": [
-    { "channelId": "특별기획전_채널_ID", ... },
-    { "channelId": "전시차_채널_ID", ... },
-    { "channelId": "리퍼브_채널_ID", ... }
-  ]
+    { "channelId": "특별기획전_채널_ID", "label": "특별기획전", "exhbNo": "E20260277", "deliveryAreaCode": "T", "deliveryLocalAreaCode": "T1", "subsidyRegion": "1100" },
+    { "channelId": "전시차_채널_ID", "label": "전시차", "exhbNo": "D0003", "subsidyRegion": "1100" },
+    { "channelId": "리퍼브_채널_ID", "label": "리퍼브", "exhbNo": "R0003", "deliveryAreaCode": "T", "deliveryLocalAreaCode": "T1", "subsidyRegion": "" }
+  ],
+  "api": {
+    "baseUrl": "https://casper.hyundai.com/gw/wp/product/v2/product/exhibition/cars",
+    "headers": {
+      "Content-Type": "application/json;charset=utf-8",
+      "Accept": "application/json, text/plain, */*",
+      "ep-channel": "wpc",
+      "ep-version": "v2",
+      "service-type": "product",
+      "x-b3-sampled": "1",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    },
+    "defaultPayload": {
+      "subsidyRegion": "1100",
+      "choiceOptYn": "Y",
+      "carCode": "",
+      "sortCode": "50",
+      "deliveryAreaCode": "T",
+      "deliveryLocalAreaCode": "T1",
+      "carBodyCode": "",
+      "carEngineCode": "",
+      "carTrimCode": "",
+      "exteriorColorCode": "",
+      "interiorColorCode": [],
+      "deliveryCenterCode": "",
+      "wpaScnCd": "",
+      "optionFilter": "",
+      "pageNo": 1,
+      "pageSize": 18
+    }
+  }
 }
 ```
+**🚨 필수 주의사항 (Anti-Bot 우회 파라미터):**
+최신 현대차 보안 패치 대응을 위해 위 `defaultPayload` 안의 **18개 항목(특히 값이 빈 문자열 `""` 이나 빈 배열 `[]` 인 필드들)을 단 하나도 누락 없이** `config.json`에 100% 동일하게 입력해야 기획전 차량이 정상 감지됩니다 (0대 응답 버그 방지).
 
 ## 실행
 
