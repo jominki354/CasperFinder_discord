@@ -28,10 +28,15 @@ class TokenRefresher:
             )
             try:
                 async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
+                    browser = await p.chromium.launch(
+                        headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"]
+                    )
                     context = await browser.new_context(
-                        viewport={"width": 1280, "height": 720},
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        viewport={"width": 1920, "height": 1080},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        extra_http_headers={
+                            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+                        },
                     )
                     page = await context.new_page()
 
@@ -39,61 +44,75 @@ class TokenRefresher:
 
                     async def handle_request(request):
                         nonlocal intercepted_key
-                        if "product/exhibition/cars" in request.url:
-                            # 캡처 스크립트가 쏴준 가짜 요청 등에서 헤더 추출
-                            for k, v in request.headers.items():
-                                if k.lower() == "x-ux-state-key":
-                                    intercepted_key = v
+                        # 모든 요청 헤더를 감시하여 X-UX-State-Key가 담긴 패턴을 찾습니다.
+                        headers = request.headers
+                        for k, v in headers.items():
+                            if k.lower() == "x-ux-state-key":
+                                intercepted_key = v
+                                # log.debug(f"[Refresher] Intercepted Key from {request.url[:50]}...")
 
                     page.on("request", handle_request)
 
-                    # 브라우저 XMLHttpRequest 후킹 스크립트 주입 (X-UX-State-Key 추출 목적)
+                    # 브라우저 XMLHttpRequest 후킹 스크립트 주입
                     await page.add_init_script("""
                         window.capturedReqs = [];
                         const originalOpen = XMLHttpRequest.prototype.open;
                         const originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
                         XMLHttpRequest.prototype.open = function(method, url) { this._url = url; this._headers = {}; return originalOpen.apply(this, arguments); };
                         XMLHttpRequest.prototype.setRequestHeader = function(k, v) { this._headers[k] = v; return originalSetHeader.apply(this, arguments); };
+                        
                         const originalFetch = window.fetch;
                         window.fetch = async function(...args) {
-                            let url = args[0];
-                            if(typeof url !== 'string' && url.url) url = url.url;
-                            if (typeof url === 'string' && url.includes('cars')) {
+                            let url = (typeof args[0] === 'string') ? args[0] : (args[0].url || "");
+                            let response = await originalFetch.apply(this, args);
+                            if (url.includes('cars') || url.includes('promotion')) {
                                 let headers = {};
-                                if (args[1]) { headers = args[1].headers || {}; }
-                                window.capturedReqs.push({type: 'fetch', url: url, headers: headers});
+                                try {
+                                    if(args[1] && args[1].headers) headers = args[1].headers;
+                                } catch(e){}
+                                window.capturedReqs.push({url: url, headers: headers});
                             }
-                            return originalFetch.apply(this, args);
+                            return response;
                         };
                     """)
 
-                    # 봇 차단막을 통과하기 위해 기획전 페이지 접속
-                    log.info("[Refresher] 안전 페이지 접속 중...")
+                    # 1. 먼저 메인 페이지 접속 (자연스러운 유동 유도)
+                    log.info("[Refresher] 1단계: 현대차 캐스퍼 메인 접속...")
+                    await page.goto(
+                        "https://casper.hyundai.com",
+                        wait_until="networkidle",
+                        timeout=60000,
+                    )
+                    await asyncio.sleep(2)
+
+                    # 2. 기획전 페이지로 이동
+                    log.info("[Refresher] 2단계: 기획전 페이지 이동...")
                     await page.goto(
                         "https://casper.hyundai.com/vehicles/car-list/promotion",
                         wait_until="networkidle",
+                        timeout=60000,
                     )
 
-                    # WAF 통과 및 토큰 생성을 유도하기 위한 지연 및 클릭
-                    await asyncio.sleep(2)
-
+                    # 3. 데이터 로딩을 위해 잠시 대기 및 "초기화" 버튼 클릭 시도 (이벤트 발생)
+                    await asyncio.sleep(3)
                     try:
-                        await page.click("text=초기화", timeout=3000)
-                        await asyncio.sleep(1)
+                        # 초기화 버튼을 눌러서 API 호출을 강제로 발생시킴
+                        await page.click("button:has-text('초기화')", timeout=5000)
+                        log.info("[Refresher] 3단계: 초기화 버튼 클릭 완료")
+                        await asyncio.sleep(2)
                     except:
-                        pass
+                        log.warning(
+                            "[Refresher] 초기화 버튼을 찾지 못했으나 계속 진행합니다."
+                        )
 
                     # JS 환경 내에서 캡처된 헤더 수집
                     captured = await page.evaluate("window.capturedReqs")
                     js_key = None
                     if captured:
                         for req in captured:
-                            headers = req.get("headers", {})
-                            for k, v in headers.items():
-                                if (
-                                    k.lower() == "x-ux-state-key"
-                                    or k == "X-UX-State-Key"
-                                ):
+                            h = req.get("headers", {})
+                            for k, v in h.items():
+                                if k.lower() == "x-ux-state-key":
                                     js_key = v
                                     break
                             if js_key:
@@ -101,29 +120,40 @@ class TokenRefresher:
 
                     self.ux_state_key = js_key or intercepted_key or ""
 
-                    # 쿠키 추출 (TS01... 등)
+                    # 쿠키 추출
                     cookies_list = await context.cookies()
-                    cookie_str = "; ".join(
+                    self.cookies = "; ".join(
                         [f"{c['name']}={c['value']}" for c in cookies_list]
                     )
-                    self.cookies = cookie_str
 
                     await browser.close()
 
-                    if self.ux_state_key and "TS01" in self.cookies:
+                    has_ts_cookie = "TS01" in self.cookies
+                    if self.ux_state_key and has_ts_cookie:
                         log.info(
-                            f"[Refresher] ✅ 보안 토큰 갱신 성공 (Key: {self.ux_state_key[:8]}...)"
+                            f"[Refresher] ✅ 보안 토큰 획득 성공 (Key: {self.ux_state_key[:8]}...)"
                         )
                         self.last_refresh_time = now
                         return True
                     else:
+                        fail_reason = []
+                        if not self.ux_state_key:
+                            fail_reason.append("State-Key 누락")
+                        if not has_ts_cookie:
+                            fail_reason.append("TS01 쿠키 누락")
                         log.warning(
-                            "[Refresher] ⚠️ 보안 토큰 획득 실패 (응답에 WAF 쿠키나 상태 키가 없음)"
+                            f"[Refresher] ⚠️ 갱신 실패: {', '.join(fail_reason)}"
                         )
+                        # 디버깅을 위해 쿠키 이름들 로깅
+                        cookie_names = [c["name"] for c in cookies_list]
+                        log.debug(f"[Refresher] 발견된 쿠키 목록: {cookie_names}")
                         return False
 
             except Exception as e:
                 log.error(f"[Refresher] ❌ 가상 브라우저 구동 중 에러 발생: {e}")
+                import traceback
+
+                log.error(traceback.format_exc())
                 return False
 
     def get_headers(self):
