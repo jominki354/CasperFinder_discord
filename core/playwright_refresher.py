@@ -42,85 +42,225 @@ class TokenRefresher:
 
                     intercepted_key = None
 
+                    # === 요청(request) 이벤트 감시 ===
                     async def handle_request(request):
                         nonlocal intercepted_key
-                        # 모든 요청 헤더를 감시하여 X-UX-State-Key가 담긴 패턴을 찾습니다.
                         headers = request.headers
                         for k, v in headers.items():
-                            if k.lower() == "x-ux-state-key":
+                            if k.lower() == "x-ux-state-key" and v:
                                 intercepted_key = v
-                                # log.debug(f"[Refresher] Intercepted Key from {request.url[:50]}...")
+                                log.info(
+                                    f"[Refresher] 🔑 Request 이벤트에서 State-Key 발견: {v[:16]}..."
+                                )
+
+                    # === 응답(response) 이벤트 감시 ===
+                    async def handle_response(response):
+                        nonlocal intercepted_key
+                        # 응답의 원본 요청에서도 헤더 추출 시도
+                        try:
+                            req_headers = response.request.headers
+                            for k, v in req_headers.items():
+                                if k.lower() == "x-ux-state-key" and v:
+                                    if not intercepted_key:
+                                        intercepted_key = v
+                                        log.info(
+                                            f"[Refresher] 🔑 Response→Request 역추적으로 State-Key 발견: {v[:16]}..."
+                                        )
+                        except Exception:
+                            pass
 
                     page.on("request", handle_request)
+                    page.on("response", handle_response)
 
-                    # 브라우저 XMLHttpRequest 후킹 스크립트 주입
+                    # 브라우저 XMLHttpRequest/fetch 후킹 스크립트 주입
                     await page.add_init_script("""
+                        window.__capturedStateKeys = [];
                         window.capturedReqs = [];
+                        
+                        // XMLHttpRequest 후킹
                         const originalOpen = XMLHttpRequest.prototype.open;
                         const originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-                        XMLHttpRequest.prototype.open = function(method, url) { this._url = url; this._headers = {}; return originalOpen.apply(this, arguments); };
-                        XMLHttpRequest.prototype.setRequestHeader = function(k, v) { this._headers[k] = v; return originalSetHeader.apply(this, arguments); };
+                        const originalSend = XMLHttpRequest.prototype.send;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            this._url = url; this._headers = {};
+                            return originalOpen.apply(this, arguments);
+                        };
+                        XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
+                            this._headers[k] = v;
+                            if (k.toLowerCase() === 'x-ux-state-key') {
+                                window.__capturedStateKeys.push(v);
+                            }
+                            return originalSetHeader.apply(this, arguments);
+                        };
                         
+                        // Fetch 후킹
                         const originalFetch = window.fetch;
                         window.fetch = async function(...args) {
-                            let url = (typeof args[0] === 'string') ? args[0] : (args[0].url || "");
-                            let response = await originalFetch.apply(this, args);
-                            if (url.includes('cars') || url.includes('promotion')) {
-                                let headers = {};
-                                try {
-                                    if(args[1] && args[1].headers) headers = args[1].headers;
-                                } catch(e){}
-                                window.capturedReqs.push({url: url, headers: headers});
+                            let url = (typeof args[0] === 'string') ? args[0] : (args[0]?.url || "");
+                            let headers = {};
+                            try {
+                                if (args[1] && args[1].headers) {
+                                    if (args[1].headers instanceof Headers) {
+                                        args[1].headers.forEach((v, k) => { headers[k] = v; });
+                                    } else {
+                                        headers = args[1].headers;
+                                    }
+                                }
+                            } catch(e) {}
+                            
+                            // State-Key 캡처
+                            for (let [k, v] of Object.entries(headers)) {
+                                if (k.toLowerCase() === 'x-ux-state-key') {
+                                    window.__capturedStateKeys.push(v);
+                                }
                             }
-                            return response;
+                            
+                            window.capturedReqs.push({url: url, headers: headers});
+                            return originalFetch.apply(this, args);
                         };
                     """)
 
-                    # 1. 먼저 메인 페이지 접속 (자연스러운 유동 유도)
+                    # ── 1단계: 메인 페이지 접속 ──
                     log.info("[Refresher] 1단계: 현대차 캐스퍼 메인 접속...")
                     await page.goto(
                         "https://casper.hyundai.com",
-                        wait_until="domcontentloaded",
+                        wait_until="networkidle",
                         timeout=120000,
                     )
                     await asyncio.sleep(3)
 
-                    # 2. 기획전 페이지로 이동 (exhbNo 파라미터 필수)
+                    # 이미 Key를 잡았는지 중간 확인
+                    if intercepted_key:
+                        log.info("[Refresher] ✅ 1단계에서 이미 State-Key 획득!")
+
+                    # ── 2단계: 기획전 페이지로 이동 ──
                     log.info("[Refresher] 2단계: 기획전 페이지 이동...")
                     await page.goto(
                         "https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo=E20260277",
-                        wait_until="domcontentloaded",
+                        wait_until="networkidle",
                         timeout=120000,
                     )
-                    # networkidle 대신 DOM 로드 후 추가 대기로 API 호출 유도
                     await asyncio.sleep(5)
 
-                    # 3. 데이터 로딩을 위해 잠시 대기 및 "초기화" 버튼 클릭 시도 (이벤트 발생)
-                    await asyncio.sleep(3)
+                    # ── 3단계: 사용자 행위 시뮬레이션으로 API 호출 유도 ──
+                    log.info("[Refresher] 3단계: 사용자 행위 시뮬레이션...")
+
+                    # 3-1. 초기화 버튼 클릭 시도
                     try:
-                        # 초기화 버튼을 눌러서 API 호출을 강제로 발생시킴
                         await page.click("button:has-text('초기화')", timeout=5000)
                         log.info("[Refresher] 3단계: 초기화 버튼 클릭 완료")
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
                     except Exception:
                         log.warning(
                             "[Refresher] 초기화 버튼을 찾지 못했으나 계속 진행합니다."
                         )
 
-                    # JS 환경 내에서 캡처된 헤더 수집
-                    captured = await page.evaluate("window.capturedReqs")
-                    js_key = None
-                    if captured:
-                        for req in captured:
-                            h = req.get("headers", {})
-                            for k, v in h.items():
-                                if k.lower() == "x-ux-state-key":
-                                    js_key = v
-                                    break
-                            if js_key:
-                                break
+                    # 3-2. 스크롤 다운으로 lazy-load API 호출 유도
+                    if not intercepted_key:
+                        try:
+                            await page.evaluate(
+                                "window.scrollTo(0, document.body.scrollHeight)"
+                            )
+                            await asyncio.sleep(2)
+                            await page.evaluate("window.scrollTo(0, 0)")
+                            await asyncio.sleep(1)
+                        except Exception:
+                            pass
 
-                    self.ux_state_key = js_key or intercepted_key or ""
+                    # 3-3. 다른 기획전 탭 클릭 시도 (API 재호출 유도)
+                    if not intercepted_key:
+                        for selector in [
+                            "button:has-text('전시차')",
+                            "a:has-text('전시차')",
+                            "[data-tab]:nth-child(2)",
+                            ".tab-item:nth-child(2)",
+                        ]:
+                            try:
+                                await page.click(selector, timeout=3000)
+                                log.info(f"[Refresher] 탭 클릭 성공: {selector}")
+                                await asyncio.sleep(3)
+                                break
+                            except Exception:
+                                continue
+
+                    # ── 4단계: JS 환경에서 캡처된 State-Key 수집 ──
+                    js_key = None
+                    try:
+                        # 방법 A: 후킹된 __capturedStateKeys 배열에서 추출
+                        captured_keys = await page.evaluate(
+                            "window.__capturedStateKeys || []"
+                        )
+                        if captured_keys:
+                            js_key = captured_keys[-1]  # 가장 최근 키
+                            log.info(
+                                f"[Refresher] 🔑 JS 후킹에서 State-Key {len(captured_keys)}개 발견"
+                            )
+                    except Exception:
+                        pass
+
+                    if not js_key:
+                        try:
+                            # 방법 B: capturedReqs에서 추출
+                            captured = await page.evaluate("window.capturedReqs || []")
+                            if captured:
+                                for req in captured:
+                                    h = req.get("headers", {})
+                                    for k, v in h.items():
+                                        if k.lower() == "x-ux-state-key":
+                                            js_key = v
+                                            break
+                                    if js_key:
+                                        break
+                        except Exception:
+                            pass
+
+                    if not js_key and not intercepted_key:
+                        # 방법 C: 페이지 전역 변수/localStorage/sessionStorage 탐색
+                        try:
+                            js_key = await page.evaluate("""
+                                (() => {
+                                    // Next.js __NEXT_DATA__ 확인
+                                    if (window.__NEXT_DATA__) {
+                                        const props = JSON.stringify(window.__NEXT_DATA__);
+                                        const match = props.match(/state[Kk]ey["\s:]+["']([^"']+)/);
+                                        if (match) return match[1];
+                                    }
+                                    // localStorage 탐색
+                                    for (let i = 0; i < localStorage.length; i++) {
+                                        const key = localStorage.key(i);
+                                        const val = localStorage.getItem(key);
+                                        if (key.toLowerCase().includes('state') && key.toLowerCase().includes('key')) {
+                                            return val;
+                                        }
+                                        if (val && val.length > 20 && val.length < 200) {
+                                            try {
+                                                const obj = JSON.parse(val);
+                                                if (obj['X-UX-State-Key'] || obj['x-ux-state-key']) {
+                                                    return obj['X-UX-State-Key'] || obj['x-ux-state-key'];
+                                                }
+                                            } catch(e) {}
+                                        }
+                                    }
+                                    // sessionStorage 탐색
+                                    for (let i = 0; i < sessionStorage.length; i++) {
+                                        const key = sessionStorage.key(i);
+                                        const val = sessionStorage.getItem(key);
+                                        if (key.toLowerCase().includes('state') && key.toLowerCase().includes('key')) {
+                                            return val;
+                                        }
+                                    }
+                                    return null;
+                                })()
+                            """)
+                            if js_key:
+                                log.info(
+                                    f"[Refresher] 🔑 Storage/전역변수에서 State-Key 발견: {js_key[:16]}..."
+                                )
+                        except Exception as e:
+                            log.debug(f"[Refresher] Storage 탐색 실패: {e}")
+
+                    final_key = js_key or intercepted_key or ""
+                    self.ux_state_key = final_key
 
                     # 쿠키 추출
                     cookies_list = await context.cookies()
@@ -146,9 +286,18 @@ class TokenRefresher:
                         log.warning(
                             f"[Refresher] ⚠️ 갱신 실패: {', '.join(fail_reason)}"
                         )
-                        # 디버깅을 위해 쿠키 이름들 로깅
+                        # 디버깅을 위해 쿠키 이름 + 캡처된 요청 수 로깅
                         cookie_names = [c["name"] for c in cookies_list]
-                        log.debug(f"[Refresher] 발견된 쿠키 목록: {cookie_names}")
+                        log.info(f"[Refresher] 발견된 쿠키 목록: {cookie_names}")
+                        try:
+                            req_count = (
+                                await page.evaluate("window.capturedReqs?.length || 0")
+                                if not browser.is_connected()
+                                else 0
+                            )
+                        except Exception:
+                            req_count = "N/A"
+                        log.info(f"[Refresher] 캡처된 요청 수: {req_count}")
                         return False
 
             except Exception as e:
